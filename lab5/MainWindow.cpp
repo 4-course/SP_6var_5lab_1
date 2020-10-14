@@ -11,9 +11,19 @@ struct ARGS {
     HWND mainHwnd;
 }args;
 
-HWND text;
+struct PARAMS {
+    double x0;
+    double y0;
+    double diag1;
+    double diag2;
+    HWND hWnd;
+}params;
+
+HWND text, rombX, rombY, diagonal1, diagonal2;
 DWORD threadID1;
 HANDLE threadHandle;
+DWORD threadID2;
+HANDLE threadHandle2;
 
 int circleRadius;
 double gradus;
@@ -23,6 +33,10 @@ double X0, Y0,
 rx, ry,
 c, s,
 X1, Y1;
+
+HDC memDC, hdc;
+HBITMAP memBM;
+HANDLE handle;
 
 void checkIsCLassRegistered(WNDCLASSEX windowClass) {
     if (!RegisterClassEx(&windowClass)) {
@@ -60,15 +74,44 @@ DWORD WINAPI moveText(LPVOID hWnd) {
     return 0;
 }
 
+DWORD WINAPI thread2(LPVOID params) {
+    PARAMS* parameters = (PARAMS*)params;
+    PAINTSTRUCT ps;
+    RECT r;
+    hdc = GetDC(parameters->hWnd);
+
+    memDC = CreateCompatibleDC(hdc);
+    memBM = CreateCompatibleBitmap(hdc, 800, 400);
+    handle = SelectObject(memDC, memBM);
+
+    SetRect(&r, 0, 0, 800, 400);
+    HBRUSH brush = CreateSolidBrush(RGB(255, 255, 255));
+    FillRect(memDC, &r, brush);
+
+    MoveToEx(memDC, 555 + parameters->x0, 200 - parameters->y0 + parameters->diag1 / 2, NULL);
+    LineTo(memDC, 555 + parameters->x0 - parameters->diag2 / 2, 200 - parameters->y0);
+    LineTo(memDC, 555 + parameters->x0, 200 - parameters->y0 - parameters->diag1 / 2);
+    LineTo(memDC, 555 + parameters->x0 + parameters->diag2 / 2, 200 - parameters->y0);
+    LineTo(memDC, 555 + parameters->x0, 200 - parameters->y0 + parameters->diag1 / 2);
+    MoveToEx(memDC, 555, 420, NULL);
+    LineTo(memDC, 555, 55);
+
+    DeleteObject(brush);
+    InvalidateRect(parameters->hWnd, NULL, TRUE);
+     return 0;
+}
+
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     RECT rt;
     rt.left = 0;
     rt.top = 0;
-    rt.right = 400;
-    rt.bottom = 400;
+    rt.right = 310;
+    rt.bottom = 310;
     HDC hdc;
     PAINTSTRUCT ps;
     int d;
+    double lineLength = 5 * sqrt(3);
+    wchar_t rombx[5], romby[5], diag1[5], diag2[5];
     switch (uMsg) {
         case WM_CREATE:
             //создать поток 1 в приостановленном состоянии
@@ -78,6 +121,19 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 args = {text, hWnd};
                 threadHandle = CreateThread(NULL, 0, moveText, &args, CREATE_SUSPENDED, &threadID1);
             }
+
+            rombX = CreateWindow(L"edit", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_RIGHT, 
+                                 340, 9, 50, 25, hWnd, 0, 
+                                 ((LPCREATESTRUCT)lParam)->hInstance, NULL);
+            rombY = CreateWindow(L"edit", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_RIGHT, 
+                                 430, 9, 50, 25, hWnd, 0, 
+                                 ((LPCREATESTRUCT)lParam)->hInstance, NULL);
+            diagonal1 = CreateWindow(L"edit", L"40", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_RIGHT, 
+                                 540, 9, 50, 25, hWnd, 0, 
+                                 ((LPCREATESTRUCT)lParam)->hInstance, NULL);
+            diagonal2 = CreateWindow(L"edit", L"50", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_RIGHT, 
+                                 650, 9, 50, 25, hWnd, 0, 
+                                 ((LPCREATESTRUCT)lParam)->hInstance, NULL);
             break;
         case WM_COMMAND:
             switch (LOWORD(wParam)) {
@@ -98,10 +154,55 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     EnableMenuItem(GetMenu(hWnd), ID_RESUME1, MF_ENABLED);
                     InvalidateRect(hWnd, NULL, TRUE);
                     break;
+                case ID_CREATE2:
+                    GetWindowText(rombX, rombx, sizeof(rombx));
+                    GetWindowText(rombY, romby, sizeof(romby));
+                    GetWindowText(diagonal1, diag1, sizeof(diag1));
+                    GetWindowText(diagonal2, diag2, sizeof(diag2));
+
+                    params.x0 = _wtof(rombx);
+                    params.y0 = _wtof(romby);
+                    params.diag1 = _wtof(diag1);
+                    params.diag2 = _wtof(diag2);
+                    params.hWnd = hWnd;
+
+                    if (params.diag1 <= 0 || params.diag2 <= 0) {
+                        MessageBox(hWnd, L"Диагонали не могут быть меньше нуля", L"Диагонали ромба", MB_ICONERROR);
+                        break;
+                    }
+
+                    threadHandle2 = CreateThread(NULL, 0, thread2, &params, NULL, &threadID2);
+                    EnableMenuItem(GetMenu(hWnd), ID_CREATE2, MF_DISABLED | MF_GRAYED);
+
+                    break;
             }
             break;
         case WM_PAINT:
             hdc = BeginPaint(hWnd, &ps);
+
+            if (memDC != NULL) {
+                BitBlt(hdc, 0, 0, 800, 400, memDC, 0, 0, SRCCOPY);
+                DeleteObject(memBM);
+                DeleteDC(memDC);
+            }
+
+            TextOut(hdc, 310, 12, L"X0=", 3);
+            TextOut(hdc, 400, 12, L"Y0=", 3);
+            TextOut(hdc, 490, 12, L"diag1=", 6);
+            TextOut(hdc, 600, 12, L"diag2=", 6);
+
+            MoveToEx(hdc, 555, 400, NULL);
+            LineTo(hdc, 555, 35);
+            LineTo(hdc, 560, 35 + 5*sqrt(3));
+            MoveToEx(hdc, 555, 35, NULL);
+            LineTo(hdc, 550, 35 + 5 * sqrt(3));
+
+            MoveToEx(hdc, 310, 200, NULL);
+            LineTo(hdc, 780, 200);
+            LineTo(hdc, 780 - 5 * sqrt(3), 205);
+            MoveToEx(hdc, 780, 200, NULL);
+            LineTo(hdc, 780 - 5 * sqrt(3), 195);
+            
 
             FillRect(hdc, &rt, (HBRUSH)(COLOR_WINDOW + 1));
 
